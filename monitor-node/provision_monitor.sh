@@ -116,6 +116,11 @@ echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 sysctl -p
 
 # 13. File Integrity Monitoring (Monit)
+# Enable Monit local HTTP interface for 'monit status' command
+sed -i 's/^# set httpd port 2812 and/set httpd port 2812 and/' /etc/monit/monitrc
+sed -i 's/^# *use address localhost/    use address localhost/' /etc/monit/monitrc
+sed -i 's/^# *allow localhost/    allow localhost/' /etc/monit/monitrc
+
 cat <<EOF >> /etc/monit/monitrc
 check file passwd with path /etc/passwd
     if changed sha1 checksum then alert
