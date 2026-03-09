@@ -71,7 +71,7 @@ To ensure zero data loss and minimal Recovery Time Objective (RTO):
 ### Phase 1: Preparation & Execution
 1. Clone the repository to your server:
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/Nexlogiq-Infrastructure.git](https://github.com/YOUR_USERNAME/Nexlogiq-Infrastructure.git)
+   git clone [https://github.com/nexlogiqai/Nexlogiq-Infrastructure.git](https://github.com/nexlogiqai/Nexlogiq-Infrastructure.git)
    cd Nexlogiq-Infrastructure
    ```
 
