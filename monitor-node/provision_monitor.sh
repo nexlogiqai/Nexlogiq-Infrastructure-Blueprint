@@ -23,7 +23,7 @@ echo "[INFO] Initializing Nexlogiq Monitoring Node Provisioning..."
 # 1. System Update & Core Dependencies
 export DEBIAN_FRONTEND=noninteractive
 apt update && apt upgrade -y
-apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd audispd-plugins monit
+apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd audispd-plugins monit jq
 
 # 2. Automated Security Patching
 cat <<EOF > /etc/apt/apt.conf.d/20auto-upgrades
@@ -101,9 +101,10 @@ EOF
 echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
 echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
 
-# 11. Memory Optimization (2GB Swap for Light Observability Workloads)
+# 11. Memory Optimization (9GB Swap for Extreme Stability on Low-RAM)
 if [ ! -f /swapfile ]; then
-    fallocate -l 2G /swapfile
+    echo "[INFO] Allocating 9GB Swap Space..."
+    fallocate -l 9G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile && swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
@@ -116,7 +117,6 @@ echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 sysctl -p
 
 # 13. File Integrity Monitoring (Monit)
-# Using Append method to ensure HTTP interface is enabled regardless of config formatting
 cat <<EOF >> /etc/monit/monitrc
 
 # Nexlogiq AI Monitoring Rules
@@ -138,7 +138,113 @@ check process docker with pidfile /var/run/docker.pid
 EOF
 systemctl restart monit
 
-# 14. Restricted Enterprise MOTD Branding
+# ==============================================================================
+# 14. Automated Observability Stack Deployment (Dynamic Discovery & Limits)
+# ==============================================================================
+echo "[INFO] Deploying Observability Stack..."
+OBS_DIR="/home/$USER_NAME/observability"
+mkdir -p $OBS_DIR/prometheus
+
+# Create targets.json
+cat <<EOF > $OBS_DIR/prometheus/targets.json
+[]
+EOF
+
+# Create prometheus.yml
+cat <<EOF > $OBS_DIR/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: 'prometheus_self'
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: 'nexlogiq_core_nodes'
+    file_sd_configs:
+      - files:
+        - '/etc/prometheus/targets.json'
+        refresh_interval: 15s
+EOF
+
+# Create docker-compose.yml
+cat <<EOF > $OBS_DIR/docker-compose.yml
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nexlogiq_prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/targets.json:/etc/prometheus/targets.json
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.max-connections=20'
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nexlogiq_grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=nexlogiq_admin
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: nexlogiq_uptime_kuma
+    volumes:
+      - uptime-kuma_data:/app/data
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+
+networks:
+  monitor-net:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  uptime-kuma_data:
+EOF
+
+chown -R $USER_NAME:$USER_NAME $OBS_DIR
+cd $OBS_DIR
+docker compose up -d
+echo "[SUCCESS] Observability Stack is running with limits and dynamic discovery!"
+
+# ==============================================================================
+# 15. Restricted Enterprise MOTD Branding
+# ==============================================================================
 chmod -x /etc/update-motd.d/* 2>/dev/null
 cat << 'EOF' > /etc/update-motd.d/99-nexlogiq
 #!/bin/sh
