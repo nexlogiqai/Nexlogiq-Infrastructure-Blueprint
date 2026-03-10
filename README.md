@@ -39,6 +39,29 @@ By doing this:
 1. The server becomes completely invisible to automated port scanners and botnets.
 2. Administrative SSH access is **only possible** by pinging the internal Tailscale VPN IP (e.g., `100.x.x.x`).
 
+### Cloudflare Strict Lockdown (Optional)
+**⚠️ WARNING:** ONLY execute this script if your domains are strictly routed through **Cloudflare**. If you use another CDN or direct DNS, this will block all incoming web traffic to your server.
+
+While UFW handles OS-level ports, your public IP remains vulnerable to direct DDoS attacks bypassing Cloudflare's WAF. This script configures UFW to drop all web traffic (Ports 80/443) unless it originates from official Cloudflare IP addresses.
+
+```bash
+#!/bin/bash
+# Allow IPv4 from Cloudflare
+for ip in $(curl -s https://www.cloudflare.com/ips-v4); do
+    sudo ufw allow proto tcp from $ip to any port 80,443 comment 'Cloudflare IP'
+done
+
+# Allow IPv6 from Cloudflare
+for ip in $(curl -s https://www.cloudflare.com/ips-v6); do
+    sudo ufw allow proto tcp from $ip to any port 80,443 comment 'Cloudflare IP'
+done
+
+# Deny all other direct web traffic
+sudo ufw deny 80/tcp comment 'Deny direct HTTP'
+sudo ufw deny 443/tcp comment 'Deny direct HTTPS'
+sudo ufw reload
+```
+
 ### Emergency "Break-Glass" Procedure
 1. Log into the Cloud Provider Console (Oracle Cloud / AWS).
 2. Temporarily open the custom SSH port in the VCN Security Group.
@@ -101,6 +124,74 @@ Immediately run:
 google-authenticator
 ```
 *(Answer **y** to all prompts, scan QR code, and save backup codes).*
+
+**Step 3: Activate Zero-Trust VPN**
+```bash
+sudo tailscale up
+```
+
+**Step 4: The "Invisible" Switch**
+Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
+
+---
+
+## 6. System Verification Commands
+
+```bash
+# Check Firewall Rules
+sudo ufw status numbered
+
+# Check Active Threat Defense
+sudo cscli metrics
+
+# Check Integrity & Health Status
+sudo monit status
+
+# Check Docker Daemon Logging
+docker info | grep "Logging Driver"
+```
+
+---
+**Maintained by Nexlogiq AI** | Infrastructure Engineering Division
+```bash
+ssh -i /path/to/private_key -p <YOUR_PORT> <USER_NAME>@<PUBLIC_IP>
+```
+
+**Step 2: Setup MFA**
+Immediately run:
+```bash
+google-authenticator
+```
+*(Answer **y** to all prompts, scan QR code, and save backup codes).*
+
+**Step 3: Activate Zero-Trust VPN**
+```bash
+sudo tailscale up
+```
+
+**Step 4: The "Invisible" Switch**
+Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
+
+---
+
+## 6. System Verification Commands
+
+```bash
+# Check Firewall Rules
+sudo ufw status numbered
+
+# Check Active Threat Defense
+sudo cscli metrics
+
+# Check Integrity & Health Status
+sudo monit status
+
+# Check Docker Daemon Logging
+docker info | grep "Logging Driver"
+```
+
+---
+**Maintained by Nexlogiq AI** | Infrastructure Engineering Division
 
 **Step 3: Activate Zero-Trust VPN**
 ```bash
