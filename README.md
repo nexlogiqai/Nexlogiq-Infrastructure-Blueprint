@@ -11,7 +11,7 @@ This infrastructure strictly adheres to the **NIST SP 800-207 Zero-Trust archite
 The repository is divided into two distinct node types:
 
 * **`core-node`**: The primary engine for databases, AI agents, and production applications (e.g., Coolify). Optimized for heavy workloads with an 8GB Swap allocation, TCP BBR network acceleration, and self-healing mechanisms.
-* **`monitor-node`**: An isolated Out-of-Band (OOB) server. Connects to the core node securely via an encrypted tunnel to collect metrics without exposing telemetry to the public internet.
+* **`monitor-node`**: An isolated Out-of-Band (OOB) server. Connects to the core node securely via an encrypted tunnel to collect metrics without exposing telemetry to the public internet. Includes a pre-configured Docker stack for Prometheus, Grafana, and Uptime Kuma.
 
 ---
 
@@ -47,12 +47,12 @@ While UFW handles OS-level ports, your public IP remains vulnerable to direct DD
 ```bash
 #!/bin/bash
 # Allow IPv4 from Cloudflare
-for ip in $(curl -s https://www.cloudflare.com/ips-v4); do
+for ip in $(curl -s [https://www.cloudflare.com/ips-v4](https://www.cloudflare.com/ips-v4)); do
     sudo ufw allow proto tcp from $ip to any port 80,443 comment 'Cloudflare IP'
 done
 
 # Allow IPv6 from Cloudflare
-for ip in $(curl -s https://www.cloudflare.com/ips-v6); do
+for ip in $(curl -s [https://www.cloudflare.com/ips-v6](https://www.cloudflare.com/ips-v6)); do
     sudo ufw allow proto tcp from $ip to any port 80,443 comment 'Cloudflare IP'
 done
 
@@ -97,20 +97,19 @@ The `core-node` is pre-optimized to host **Coolify**.
    cd Nexlogiq-Infrastructure
    ```
 
-2. **Edit variables in your script:**
-   ```bash
-   # Edit core-node/provision_core.sh
-   USER_NAME="nexlogiq_admin"
-   USER_PASS="your_secure_password"
-   SSH_PORT=2222
-   ```
-
-3. **Execute the script:**
+2. **Deploy the Core Node:**
+   Edit the variables in `core-node/provision_core.sh` (USER_NAME, USER_PASS, SSH_PORT), then execute:
    ```bash
    sudo bash core-node/provision_core.sh
    ```
 
-### Phase 2: Post-Deployment Initialization (CRITICAL)
+3. **Deploy the Monitor Node:**
+   Edit the variables in `monitor-node/provision_monitor.sh` (USER_NAME, USER_PASS, SSH_PORT), then execute:
+   ```bash
+   sudo bash monitor-node/provision_monitor.sh
+   ```
+
+### Phase 2: Post-Deployment Initialization (CRITICAL FOR BOTH NODES)
 
 **Step 1: First-Time Login (Public IP)**
 Login using your **Public IP** and **SSH Key**. The script allows a one-time login without MFA via `nullok`:
@@ -133,9 +132,42 @@ sudo tailscale up
 **Step 4: The "Invisible" Switch**
 Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
 
+### Phase 3: Telemetry Integration (Zero-Trust Observability)
+
+Once both nodes are successfully connected to your Tailscale network, you need to securely link them.
+
+**1. Open the secure tunnel on the Core Node:**
+Log into your `core-node` and run the telemetry script. It will ask for the `monitor-node`'s Tailscale IP to exclusively whitelist it.
+```bash
+chmod +x core-node/enable_telemetry.sh
+sudo ./core-node/enable_telemetry.sh
+```
+
+**2. Add the Target on the Monitor Node:**
+Log into your `monitor-node` and run the dynamic target script. It will ask for the `core-node`'s Tailscale IP and a label (e.g., `prod-core-1`) to start scraping metrics automatically.
+```bash
+chmod +x monitor-node/add_target.sh
+./monitor-node/add_target.sh
+```
+
 ---
 
-## 6. System Verification Commands
+## 6. Accessing Observability Dashboards
+
+Ensure your local machine is connected to the Tailscale VPN to access these URLs using the Monitor Node's Tailscale IP:
+
+* **Grafana (Metrics & Dashboards):**
+  * **URL:** `http://<MONITOR_TAILSCALE_IP>:3000`
+  * **Default Login:** `admin` / `nexlogiq_admin`
+  * *Tip: Import Dashboard ID `1860` (Node Exporter Full) to visualize the incoming metrics instantly.*
+
+* **Uptime Kuma (Uptime Monitoring & Alerts):**
+  * **URL:** `http://<MONITOR_TAILSCALE_IP>:3001`
+  * **Default Login:** Create an admin account on your first visit.
+
+---
+
+## 7. System Verification Commands
 
 ```bash
 # Check Firewall Rules
@@ -149,74 +181,9 @@ sudo monit status
 
 # Check Docker Daemon Logging
 docker info | grep "Logging Driver"
-```
 
----
-**Maintained by Nexlogiq AI** | Infrastructure Engineering Division
-```bash
-ssh -i /path/to/private_key -p <YOUR_PORT> <USER_NAME>@<PUBLIC_IP>
-```
-
-**Step 2: Setup MFA**
-Immediately run:
-```bash
-google-authenticator
-```
-*(Answer **y** to all prompts, scan QR code, and save backup codes).*
-
-**Step 3: Activate Zero-Trust VPN**
-```bash
-sudo tailscale up
-```
-
-**Step 4: The "Invisible" Switch**
-Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
-
----
-
-## 6. System Verification Commands
-
-```bash
-# Check Firewall Rules
-sudo ufw status numbered
-
-# Check Active Threat Defense
-sudo cscli metrics
-
-# Check Integrity & Health Status
-sudo monit status
-
-# Check Docker Daemon Logging
-docker info | grep "Logging Driver"
-```
-
----
-**Maintained by Nexlogiq AI** | Infrastructure Engineering Division
-
-**Step 3: Activate Zero-Trust VPN**
-```bash
-sudo tailscale up
-```
-
-**Step 4: The "Invisible" Switch**
-Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
-
----
-
-## 6. System Verification Commands
-
-```bash
-# Check Firewall Rules
-sudo ufw status numbered
-
-# Check Active Threat Defense
-sudo cscli metrics
-
-# Check Integrity & Health Status
-sudo monit status
-
-# Check Docker Daemon Logging
-docker info | grep "Logging Driver"
+# Check Active Prometheus Targets (Run on monitor-node)
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].labels'
 ```
 
 ---
