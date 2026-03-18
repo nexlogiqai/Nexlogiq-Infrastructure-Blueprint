@@ -89,6 +89,12 @@ sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd
 sed -i "s/^#*ChallengeResponseAuthentication .*/ChallengeResponseAuthentication yes/" /etc/ssh/sshd_config
 sed -i "s/^#*KbdInteractiveAuthentication .*/KbdInteractiveAuthentication yes/" /etc/ssh/sshd_config
 
+# Force SSH to require BOTH public key and interactive auth (MFA)
+if ! grep -q "AuthenticationMethods" /etc/ssh/sshd_config; then
+    echo "AuthenticationMethods publickey,keyboard-interactive" >> /etc/ssh/sshd_config
+fi
+
+# Add PAM rule (nullok allows first login without MFA to set it up)
 if ! grep -q "pam_google_authenticator.so" /etc/pam.d/sshd; then
     echo "auth required pam_google_authenticator.so nullok" >> /etc/pam.d/sshd
 fi
