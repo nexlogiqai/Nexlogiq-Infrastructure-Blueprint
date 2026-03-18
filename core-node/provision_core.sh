@@ -21,9 +21,12 @@ fi
 echo "[INFO] Initializing Nexlogiq Core Infrastructure..."
 
 # 1. System Update & Core Dependencies
+echo "[INFO] Waiting for background updates to finish (dpkg lock)..."
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do echo "Waiting..."; sleep 3; done
+
 export DEBIAN_FRONTEND=noninteractive
 apt update && apt upgrade -y
-apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd audispd-plugins monit
+apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd monit
 
 # 2. Automated Security Patching
 cat <<EOF > /etc/apt/apt.conf.d/20auto-upgrades
