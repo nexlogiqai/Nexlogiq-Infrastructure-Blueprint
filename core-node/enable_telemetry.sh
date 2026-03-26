@@ -5,6 +5,15 @@ set -euo pipefail
 # Telemetry & Monitoring Agent Setup (Opt-In)
 # ==============================================================================
 
+verify_service() {
+    if systemctl is-active --quiet "$1"; then
+        echo "[✔] SUCCESS: Service '$1' is active and running."
+    else
+        echo "[✘] ERROR: Service '$1' failed to start!"
+        exit 1
+    fi
+}
+
 if [ "$EUID" -ne 0 ]; then
   echo "[ERROR] Privilege escalation required. Please run as root."
   exit 1
@@ -27,6 +36,7 @@ apt-get update && apt-get install -y prometheus-node-exporter
 
 systemctl enable prometheus-node-exporter
 systemctl restart prometheus-node-exporter
+verify_service prometheus-node-exporter
 
 echo "[INFO] Securing telemetry port (9100) via UFW..."
 ufw allow in on tailscale0 from $MONITOR_IP to any port 9100 comment 'Allow Monitor Node Scrape'
@@ -37,4 +47,3 @@ echo "[SUCCESS] Telemetry Agent is LIVE and SECURED!"
 echo "[INFO] Your Monitor Node ($MONITOR_IP) can now scrape"
 echo "       metrics from this server on port 9100."
 echo "======================================================="
-
