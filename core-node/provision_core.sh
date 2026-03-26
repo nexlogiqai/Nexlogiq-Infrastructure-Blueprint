@@ -1,45 +1,59 @@
 #!/bin/bash
+set -euo pipefail
 
 # ==============================================================================
 # Nexlogiq AI - Enterprise Zero-Trust Core Node Provisioning
 # ==============================================================================
-# Description: Automates the hardening and deployment of a Zero-Trust Core VPS.
-# Architecture: High Availability, Audit-Ready, and Self-Healing.
-# Author: Nexlogiq AI Infrastructure Team
-# ==============================================================================
 
-# --- Variables (CHANGE THESE BEFORE RUNNING) ---
-USER_NAME="nexlogiq_admin"
-USER_PASS="CHANGE_THIS_TO_A_SECURE_PASSWORD"
-SSH_PORT=2222 
+echo "========================================================================"
+echo "  Nexlogiq AI - Core Node Interactive Setup"
+echo "========================================================================"
 
-if [ "$EUID" -ne 0 ]; then
-  echo "[ERROR] Privilege escalation required. Please run as root."
-  exit 1
-fi
+read -p "Enter the new admin username [default: nexlogiq_admin]: " input_user
+USER_NAME=${input_user:-nexlogiq_admin}
 
-echo "[INFO] Initializing Nexlogiq Core Infrastructure..."
+read -p "Enter the custom SSH port [default: 2222]: " input_port
+SSH_PORT=${input_port:-2222}
 
-# 1. System Update & Core Dependencies
+while ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; do
+    echo "[ERROR] Invalid port. Must be a number."
+    read -p "Enter the custom SSH port [default: 2222]: " input_port
+    SSH_PORT=${input_port:-2222}
+done
+
+while true; do
+    read -sp "Enter a secure password for user '$USER_NAME': " USER_PASS
+    echo ""
+    read -sp "Confirm password: " USER_PASS_CONFIRM
+    echo ""
+    if [[ -z "$USER_PASS" ]]; then echo "[ERROR] Password cannot be empty."; elif [[ "$USER_PASS" != "$USER_PASS_CONFIRM" ]]; then echo "[ERROR] Passwords mismatch."; else break; fi
+done
+
+echo "========================================================================"
+echo "[INFO] Starting Provisioning with Username: $USER_NAME | SSH Port: $SSH_PORT"
+echo "========================================================================"
+
+if [ "$EUID" -ne 0 ]; then echo "[ERROR] Run as root (sudo)."; exit 1; fi
+
 echo "[INFO] Waiting for background updates to finish (dpkg lock)..."
-while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do echo "Waiting..."; sleep 3; done
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ; do sleep 3; done
 
 export DEBIAN_FRONTEND=noninteractive
 apt update && apt upgrade -y
-apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd monit
+apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd monit wget
 
-# 2. Automated Security Patching
 cat <<EOF > /etc/apt/apt.conf.d/20auto-upgrades
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
-echo "[SUCCESS] Unattended security upgrades configured."
+cat <<EOF > /etc/apt/apt.conf.d/50unattended-upgrades
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+EOF
 
-# 3. Time Synchronization & Auditing
 systemctl enable chrony && systemctl start chrony
 systemctl enable auditd && systemctl start auditd
 
-# 4. User Access Management
 useradd -m -s /bin/bash $USER_NAME
 echo "$USER_NAME:$USER_PASS" | chpasswd
 usermod -aG sudo $USER_NAME
@@ -53,7 +67,6 @@ if [ -f "/home/$BASE_USER/.ssh/authorized_keys" ]; then
     chmod 600 /home/$USER_NAME/.ssh/authorized_keys
 fi
 
-# 5. Docker Engine & Log Rotation
 curl -fsSL https://get.docker.com | sh
 usermod -aG docker $USER_NAME
 mkdir -p /etc/docker
@@ -65,16 +78,13 @@ cat <<EOF > /etc/docker/daemon.json
 EOF
 systemctl restart docker
 
-# 6. Systemd Journald Limits (Max 100MB)
 sed -i 's/.*SystemMaxUse=.*/SystemMaxUse=100M/' /etc/systemd/journald.conf
 systemctl restart systemd-journald
 
-# 7. Zero-Trust Network & CrowdSec
 curl -fsSL https://tailscale.com/install.sh | sh
 curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
 apt install -y crowdsec crowdsec-firewall-bouncer-iptables
 
-# 8. Firewall Rules (UFW)
 ufw default deny incoming
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -82,35 +92,39 @@ ufw allow $SSH_PORT/tcp
 ufw allow in on tailscale0
 echo "y" | ufw enable
 
-# 9. SSH Hardening & MFA
+echo "[INFO] Securing Docker against UFW bypass..."
+wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+chmod +x /usr/local/bin/ufw-docker
+ufw-docker install
+systemctl restart ufw
+
 sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
 sed -i "s/^#*PermitRootLogin .*/PermitRootLogin no/" /etc/ssh/sshd_config
 sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd_config
 sed -i "s/^#*ChallengeResponseAuthentication .*/ChallengeResponseAuthentication yes/" /etc/ssh/sshd_config
 sed -i "s/^#*KbdInteractiveAuthentication .*/KbdInteractiveAuthentication yes/" /etc/ssh/sshd_config
 
-# Force SSH to require BOTH public key and interactive auth (MFA)
-if ! grep -q "AuthenticationMethods" /etc/ssh/sshd_config; then
-    echo "AuthenticationMethods publickey,keyboard-interactive" >> /etc/ssh/sshd_config
-fi
+if ! grep -q "AuthenticationMethods" /etc/ssh/sshd_config; then echo "AuthenticationMethods publickey,keyboard-interactive" >> /etc/ssh/sshd_config; fi
+if ! grep -q "pam_google_authenticator.so" /etc/pam.d/sshd; then echo "auth required pam_google_authenticator.so nullok" >> /etc/pam.d/sshd; fi
 
-# Add PAM rule (nullok allows first login without MFA to set it up)
-if ! grep -q "pam_google_authenticator.so" /etc/pam.d/sshd; then
-    echo "auth required pam_google_authenticator.so nullok" >> /etc/pam.d/sshd
-fi
+cat <<EOF >> /etc/sysctl.conf
+fs.file-max = 2097152
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
+EOF
 
-# 10. Performance & IPv6 Disable
-echo "fs.file-max = 2097152" >> /etc/sysctl.conf
 cat <<EOF >> /etc/security/limits.conf
 * soft nofile 65535
 * hard nofile 65535
 root soft nofile 65535
 root hard nofile 65535
 EOF
-echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
-echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
 
-# 11. Memory Optimization (8GB Swap)
 if [ ! -f /swapfile ]; then
     fallocate -l 8G /swapfile
     chmod 600 /swapfile
@@ -119,20 +133,14 @@ if [ ! -f /swapfile ]; then
     echo 'vm.swappiness=10' >> /etc/sysctl.conf
 fi
 
-# 12. Network Acceleration (TCP BBR)
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 sysctl -p
 
-# 13. Self-Healing & File Integrity (Monit)
-# Using Append method to ensure HTTP interface is enabled regardless of config formatting
 cat <<EOF >> /etc/monit/monitrc
-
-# Nexlogiq AI Custom Monitoring Rules
 set httpd port 2812 and
     use address localhost
     allow localhost
-
 check file passwd with path /etc/passwd
     if changed sha1 checksum then alert
 check file sshd_config with path /etc/ssh/sshd_config
@@ -147,8 +155,7 @@ check process docker with pidfile /var/run/docker.pid
 EOF
 systemctl restart monit
 
-# 14. Enterprise MOTD Branding
-chmod -x /etc/update-motd.d/* 2>/dev/null
+chmod -x /etc/update-motd.d/* 2>/dev/null || true
 cat << 'EOF' > /etc/update-motd.d/99-nexlogiq
 #!/bin/sh
 echo "========================================================================"
@@ -165,6 +172,10 @@ echo "[AUDIT]    ALL ACTIVITIES ARE LOGGED AND MONITORED (ZERO-TRUST NODE)."
 echo "========================================================================"
 EOF
 chmod +x /etc/update-motd.d/99-nexlogiq
+
+# Make auxiliary scripts executable
+SCRIPT_DIR=$(dirname "$0")
+chmod +x "$SCRIPT_DIR"/*.sh 2>/dev/null || true
 
 echo "[INFO] Core Provisioning complete. Rebooting in 5 seconds..."
 sleep 5
