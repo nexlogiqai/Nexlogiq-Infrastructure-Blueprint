@@ -5,8 +5,17 @@ set -euo pipefail
 # Nexlogiq AI - Out-of-Band Monitoring Node Provisioning
 # ==============================================================================
 
+# --- Helper Functions for Verification ---
+verify_command() {
+    if command -v "$1" >/dev/null 2>&1; then echo "[✔] SUCCESS: '$1' is installed."; else echo "[✘] ERROR: '$1' is not installed!"; exit 1; fi
+}
+verify_service() {
+    if systemctl is-active --quiet "$1"; then echo "[✔] SUCCESS: Service '$1' is running."; else echo "[✘] ERROR: Service '$1' failed to start!"; exit 1; fi
+}
+# -----------------------------------------
+
 echo "========================================================================"
-echo "  Nexlogiq AI - Monitor Node Interactive Setup"
+echo "  Nexlogiq AI - Monitor Node Interactive Setup (Military-Grade)"
 echo "========================================================================"
 
 read -p "Enter the new admin username [default: nexlogiq_monitor]: " input_user
@@ -50,6 +59,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt update && apt upgrade -y
 apt install -y curl ufw unattended-upgrades libpam-google-authenticator chrony auditd monit jq wget
 
+verify_command jq
+verify_command ufw
+
 cat <<EOF > /etc/apt/apt.conf.d/20auto-upgrades
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
@@ -60,7 +72,19 @@ Unattended-Upgrade::Automatic-Reboot-Time "03:00";
 EOF
 
 systemctl enable chrony && systemctl start chrony
+verify_service chrony
+
 systemctl enable auditd && systemctl start auditd
+verify_service auditd
+
+echo "[INFO] Configuring Auditd Enterprise Rules..."
+cat <<EOF > /etc/audit/rules.d/nexlogiq.rules
+-w /etc/shadow -p wa -k identity_changes
+-w /etc/passwd -p wa -k identity_changes
+-w /etc/sudoers -p wa -k admin_changes
+-w /var/log/auth.log -p wa -k auth_logs
+EOF
+augenrules --load || true
 
 useradd -m -s /bin/bash $USER_NAME
 echo "$USER_NAME:$USER_PASS" | chpasswd
@@ -75,6 +99,7 @@ if [ -f "/home/$BASE_USER/.ssh/authorized_keys" ]; then
     chmod 600 /home/$USER_NAME/.ssh/authorized_keys
 fi
 
+echo "[INFO] Installing Docker..."
 curl -fsSL https://get.docker.com | sh
 usermod -aG docker $USER_NAME
 mkdir -p /etc/docker
@@ -85,13 +110,25 @@ cat <<EOF > /etc/docker/daemon.json
 }
 EOF
 systemctl restart docker
+verify_command docker
+verify_service docker
 
 sed -i 's/.*SystemMaxUse=.*/SystemMaxUse=100M/' /etc/systemd/journald.conf
 systemctl restart systemd-journald
 
+echo "[INFO] Installing Tailscale & CrowdSec..."
 curl -fsSL https://tailscale.com/install.sh | sh
+verify_command tailscale
+verify_service tailscaled
+
 curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
 apt install -y crowdsec crowdsec-firewall-bouncer-iptables
+verify_command cscli
+verify_service crowdsec
+
+cscli collections install crowdsecurity/sshd
+cscli collections install crowdsecurity/linux
+systemctl reload crowdsec || true
 
 ufw default deny incoming
 ufw allow 80/tcp
@@ -99,6 +136,7 @@ ufw allow 443/tcp
 ufw allow $SSH_PORT/tcp
 ufw allow in on tailscale0
 echo "y" | ufw enable
+if ufw status | grep -qw active; then echo "[✔] SUCCESS: UFW is active."; else echo "[✘] ERROR: UFW is NOT active!"; exit 1; fi
 
 echo "[INFO] Securing Docker against UFW bypass..."
 wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
@@ -114,6 +152,16 @@ sed -i "s/^#*KbdInteractiveAuthentication .*/KbdInteractiveAuthentication yes/" 
 
 if ! grep -q "AuthenticationMethods" /etc/ssh/sshd_config; then echo "AuthenticationMethods publickey,keyboard-interactive" >> /etc/ssh/sshd_config; fi
 if ! grep -q "pam_google_authenticator.so" /etc/pam.d/sshd; then echo "auth required pam_google_authenticator.so nullok" >> /etc/pam.d/sshd; fi
+
+cat <<EOF >> /etc/ssh/sshd_config
+# Nexlogiq AI Strict Cryptography
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+HostKeyAlgorithms ssh-ed25519,ssh-ed25519-cert-v01@openssh.com
+EOF
+
+if sshd -t; then echo "[✔] SUCCESS: SSH configuration syntax is valid."; else echo "[✘] ERROR: SSH configuration is broken!"; exit 1; fi
 
 cat <<EOF >> /etc/sysctl.conf
 fs.file-max = 2097152
@@ -162,6 +210,7 @@ check process docker with pidfile /var/run/docker.pid
     if failed host 127.0.0.1 port 2375 type tcp then restart
 EOF
 systemctl restart monit
+verify_service monit
 
 echo "[INFO] Deploying Observability Stack..."
 OBS_DIR="/home/$USER_NAME/observability"
@@ -205,6 +254,10 @@ services:
     restart: unless-stopped
     networks:
       - monitor-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
@@ -225,6 +278,10 @@ services:
       - monitor-net
     depends_on:
       - prometheus
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
@@ -240,6 +297,10 @@ services:
     restart: unless-stopped
     networks:
       - monitor-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
@@ -260,13 +321,18 @@ chmod -R 755 $OBS_DIR/prometheus
 chown $USER_NAME:$USER_NAME $OBS_DIR/docker-compose.yml
 
 echo "[INFO] Waiting for Docker daemon to stabilize..."
-while ! docker info > /dev/null 2>&1; do
-    sleep 2
-done
+while ! docker info > /dev/null 2>&1; do sleep 2; done
 
 cd $OBS_DIR
 docker compose up -d
-echo "[SUCCESS] Observability Stack is running!"
+
+# Verify containers are running
+if [ $(docker ps -q | wc -l) -ge 3 ]; then
+    echo "[✔] SUCCESS: Observability Stack containers are running!"
+else
+    echo "[✘] ERROR: Observability Stack failed to deploy correctly!"
+    exit 1
+fi
 
 chmod -x /etc/update-motd.d/* 2>/dev/null || true
 cat << 'EOF' > /etc/update-motd.d/99-nexlogiq
@@ -286,10 +352,9 @@ echo "========================================================================"
 EOF
 chmod +x /etc/update-motd.d/99-nexlogiq
 
-# Make auxiliary scripts executable
 SCRIPT_DIR=$(dirname "$0")
 chmod +x "$SCRIPT_DIR"/*.sh 2>/dev/null || true
 
-echo "[INFO] Monitoring Node Provisioning complete. Rebooting in 5 seconds..."
+echo "[INFO] Monitoring Node Provisioning complete and verified. Rebooting in 5 seconds..."
 sleep 5
 reboot
