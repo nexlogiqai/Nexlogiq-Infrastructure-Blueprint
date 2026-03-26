@@ -47,3 +47,4 @@ fi
 echo "======================================================="
 echo "[SUCCESS] Telemetry Agent is completely removed and secured!"
 echo "======================================================="
+
