@@ -20,8 +20,10 @@ The repository is divided into two distinct node types:
 ### Security & Auditing
 * **Active Defense:** CrowdSec analyzes behavioral patterns and automatically blocks malicious IPs via `iptables`.
 * **Strict Authentication:** Disables root login and password authentication entirely. Enforces SSH Key pairs combined with Google Authenticator (PAM) for mandatory Multi-Factor Authentication (MFA).
+* **Docker Firewall Lockdown:** Includes a dedicated UFW patch to prevent Docker containers from bypassing firewall rules and exposing ports.
 * **System Auditing:** Uses `auditd` to act as a "black box," logging all root-level commands.
 * **Integrity Monitoring:** `Monit` actively watches critical files (`/etc/passwd`, `/etc/ssh/sshd_config`) and alerts on unauthorized SHA1 checksum changes.
+* **Kernel Hardening:** Implements advanced `sysctl` rules to mitigate DDoS attacks (e.g., TCP Syncookies) and restrict kernel pointer leaks.
 
 ### Performance Optimization
 * **Concurrency:** Raises system file descriptor limits (`fs.file-max`) to 65,535 for high-traffic handling.
@@ -33,7 +35,7 @@ The repository is divided into two distinct node types:
 ## 3. Advanced Operational Tactics (OpSec)
 
 ### The "Invisible Node" Strategy
-While the OS-level firewall (UFW) allows the custom SSH port, **the Cloud Provider's Firewall (VCN Security Lists) must be configured to DROP all incoming SSH traffic from the public internet (0.0.0.0/0).**
+While the OS-level firewall (UFW) allows the custom SSH port, **the Cloud Provider's Firewall (VCN Security Lists / AWS Security Groups) must be configured to DROP all incoming SSH traffic from the public internet (0.0.0.0/0).**
 
 By doing this:
 1. The server becomes completely invisible to automated port scanners and botnets.
@@ -41,8 +43,6 @@ By doing this:
 
 ### Cloudflare Strict Lockdown (Optional)
 **⚠️ WARNING:** ONLY execute this script if your domains are strictly routed through **Cloudflare**. If you use another CDN or direct DNS, this will block all incoming web traffic to your server.
-
-While UFW handles OS-level ports, your public IP remains vulnerable to direct DDoS attacks bypassing Cloudflare's WAF. This script configures UFW to drop all web traffic (Ports 80/443) unless it originates from official Cloudflare IP addresses.
 
 ```bash
 #!/bin/bash
@@ -62,26 +62,11 @@ sudo ufw deny 443/tcp comment 'Deny direct HTTPS'
 sudo ufw reload
 ```
 
-### Emergency "Break-Glass" Procedure
-1. Log into the Cloud Provider Console (Oracle Cloud / AWS).
-2. Temporarily open the custom SSH port in the VCN Security Group.
-3. SSH into the server using the **Public IP** to resolve the issue.
-4. Immediately close the VCN port once restored.
-
 ---
 
-## 4. Application Layer & Disaster Recovery (DR)
+## 4. Step-by-Step Deployment Guide
 
-The `core-node` is pre-optimized to host **Coolify**.
-
-### High Availability via S3
-1. **Infrastructure as Code:** Reconstruct the secure OS layer in under 5 minutes using this script.
-2. **State Management:** Automated, encrypted backups to an external **S3-compatible Object Storage Bucket** (Cloudflare R2 or AWS S3).
-3. **Restoration:** Spin up a new node, install Coolify, and pull the latest S3 snapshot for seamless recovery.
-
----
-
-## 5. Step-by-Step Deployment Guide
+**Zero Manual Editing Required:** The provisioning scripts are fully interactive. They will prompt you securely for usernames, custom ports, and passwords during execution.
 
 ### Prerequisites
 1. Fresh installation of **Ubuntu 22.04 or 24.04**.
@@ -89,7 +74,7 @@ The `core-node` is pre-optimized to host **Coolify**.
 3. Active [Tailscale](https://tailscale.com/) account.
 4. Google Authenticator app on your mobile device.
 
-### Phase 1: Preparation & Execution
+### Phase 1: Execution (Interactive CLI)
 
 1. **Clone the repository:**
    ```bash
@@ -98,23 +83,24 @@ The `core-node` is pre-optimized to host **Coolify**.
    ```
 
 2. **Deploy the Core Node:**
-   Edit the variables in `core-node/provision_core.sh` (USER_NAME, USER_PASS, SSH_PORT), then execute:
+   Execute the core script. It will prompt you for the admin username, SSH port, and a secure password.
    ```bash
    sudo bash core-node/provision_core.sh
    ```
 
 3. **Deploy the Monitor Node:**
-   Edit the variables in `monitor-node/provision_monitor.sh` (USER_NAME, USER_PASS, SSH_PORT), then execute:
+   Execute the monitor script. It will prompt you for system credentials AND a dedicated Grafana Admin password.
    ```bash
    sudo bash monitor-node/provision_monitor.sh
    ```
+*(Note: Once the provisioning is complete, the scripts will automatically make all auxiliary management scripts executable).*
 
 ### Phase 2: Post-Deployment Initialization (CRITICAL FOR BOTH NODES)
 
 **Step 1: First-Time Login (Public IP)**
 Login using your **Public IP** and **SSH Key**. The script allows a one-time login without MFA via `nullok`:
 ```bash
-ssh -i /path/to/private_key -p <YOUR_PORT> <USER_NAME>@<PUBLIC_IP>
+ssh -i /path/to/private_key -p <YOUR_CUSTOM_PORT> <USER_NAME>@<PUBLIC_IP>
 ```
 
 **Step 2: Setup MFA**
@@ -132,23 +118,37 @@ sudo tailscale up
 **Step 4: The "Invisible" Switch**
 Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
 
-### Phase 3: Telemetry Integration (Zero-Trust Observability)
+---
 
-Once both nodes are successfully connected to your Tailscale network, you need to securely link them.
+## 5. Observability Lifecycle Management
 
-**1. Open the secure tunnel on the Core Node:**
-Log into your `core-node` and run the telemetry script. It will ask for the `monitor-node`'s Tailscale IP to exclusively whitelist it.
-```bash
-chmod +x core-node/enable_telemetry.sh
-sudo ./core-node/enable_telemetry.sh
-```
+Once both nodes are connected to your Tailscale network, you can securely link or unlink them dynamically.
 
-**2. Add the Target on the Monitor Node:**
-Log into your `monitor-node` and run the dynamic target script. It will ask for the `core-node`'s Tailscale IP and a label (e.g., `prod-core-1`) to start scraping metrics automatically.
-```bash
-chmod +x monitor-node/add_target.sh
-./monitor-node/add_target.sh
-```
+### Adding a Node to Monitoring
+1. **Enable Telemetry (Run on Core Node):**
+   ```bash
+   sudo ./core-node/enable_telemetry.sh
+   ```
+   *(Enter the Monitor Node's Tailscale IP when prompted to whitelist it).*
+
+2. **Add Target (Run on Monitor Node):**
+   ```bash
+   ./monitor-node/add_target.sh
+   ```
+   *(Follow the prompts. Prometheus will automatically detect the new target within 15 seconds).*
+
+### Removing a Node from Monitoring
+1. **Remove Target (Run on Monitor Node):**
+   ```bash
+   ./monitor-node/remove_target.sh
+   ```
+   *(Select the server from the dynamic list to safely stop scraping it).*
+
+2. **Disable Telemetry (Run on Core Node):**
+   ```bash
+   sudo ./core-node/disable_telemetry.sh
+   ```
+   *(This completely uninstalls the Node Exporter agent and locks down the UFW port).*
 
 ---
 
@@ -158,12 +158,12 @@ Ensure your local machine is connected to the Tailscale VPN to access these URLs
 
 * **Grafana (Metrics & Dashboards):**
   * **URL:** `http://<MONITOR_TAILSCALE_IP>:3000`
-  * **Default Login:** `admin` / `nexlogiq_admin`
+  * **Login:** `admin` / *(The Grafana password you set during the interactive setup)*
   * *Tip: Import Dashboard ID `1860` (Node Exporter Full) to visualize the incoming metrics instantly.*
 
 * **Uptime Kuma (Uptime Monitoring & Alerts):**
   * **URL:** `http://<MONITOR_TAILSCALE_IP>:3001`
-  * **Default Login:** Create an admin account on your first visit.
+  * **Login:** Create an admin account on your first visit.
 
 ---
 
