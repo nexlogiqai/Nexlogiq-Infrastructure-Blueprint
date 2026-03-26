@@ -37,3 +37,4 @@ echo "[SUCCESS] Telemetry Agent is LIVE and SECURED!"
 echo "[INFO] Your Monitor Node ($MONITOR_IP) can now scrape"
 echo "       metrics from this server on port 9100."
 echo "======================================================="
+
