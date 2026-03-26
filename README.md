@@ -1,51 +1,50 @@
 # Nexlogiq AI - Enterprise Distributed Infrastructure Blueprint
 
-An automated, enterprise-grade Infrastructure as Code (IaC) repository designed to provision, harden, and optimize Linux-based Virtual Private Servers (VPS). Engineered by the **Nexlogiq AI Infrastructure Team**, this blueprint establishes a highly secure, distributed architecture that splits critical application workloads from observability stacks.
+An automated, military-grade Infrastructure as Code (IaC) repository designed to provision, harden, and optimize Linux-based Virtual Private Servers (VPS). Engineered by the **Nexlogiq AI Infrastructure Team**, this blueprint is built so that even those without deep DevOps experience can deploy a highly secure, distributed architecture.
 
 ---
 
-## 1. Architecture Overview
+## 1. Architecture Overview (Simply Explained)
 
-This infrastructure strictly adheres to the **NIST SP 800-207 Zero-Trust architecture** and **CIS Benchmarks** for Linux system hardening. It assumes the public internet is a hostile environment and removes reliance on traditional perimeter-only defenses.
+Imagine your infrastructure as a highly secure bank. 
+* **`core-node`**: This is the vault. It runs your databases, AI agents, and main applications (like Coolify). It is optimized to handle heavy traffic and is completely hidden from the public.
+* **`monitor-node`**: This is the security camera room. It sits on a completely different server and connects to the vault through a secret, encrypted tunnel (Tailscale) to monitor its health without exposing the vault to the outside world.
 
-The repository is divided into two distinct node types:
-
-* **`core-node`**: The primary engine for databases, AI agents, and production applications (e.g., Coolify). Optimized for heavy workloads with an 8GB Swap allocation, TCP BBR network acceleration, and self-healing mechanisms.
-* **`monitor-node`**: An isolated Out-of-Band (OOB) server. Connects to the core node securely via an encrypted tunnel to collect metrics without exposing telemetry to the public internet. Includes a pre-configured Docker stack for Prometheus, Grafana, and Uptime Kuma.
-
----
-
-## 2. Core Defense & Performance Features
-
-### Security & Auditing
-* **Active Defense:** CrowdSec analyzes behavioral patterns and automatically blocks malicious IPs via `iptables`.
-* **Strict Authentication:** Disables root login and password authentication entirely. Enforces SSH Key pairs combined with Google Authenticator (PAM) for mandatory Multi-Factor Authentication (MFA).
-* **Docker Firewall Lockdown:** Includes a dedicated UFW patch to prevent Docker containers from bypassing firewall rules and exposing ports.
-* **System Auditing:** Uses `auditd` to act as a "black box," logging all root-level commands.
-* **Integrity Monitoring:** `Monit` actively watches critical files (`/etc/passwd`, `/etc/ssh/sshd_config`) and alerts on unauthorized SHA1 checksum changes.
-* **Kernel Hardening:** Implements advanced `sysctl` rules to mitigate DDoS attacks (e.g., TCP Syncookies) and restrict kernel pointer leaks.
-
-### Performance Optimization
-* **Concurrency:** Raises system file descriptor limits (`fs.file-max`) to 65,535 for high-traffic handling.
-* **Throughput:** Enables Google's TCP BBR algorithm to reduce latency.
-* **Resource Protection:** Strict log rotation limits for Docker (max 10MB) and Systemd Journald (max 100MB) to prevent Out-Of-Space crashes.
+We use a **"Zero-Trust"** approach, which means we assume the internet is full of attackers, and we don't even trust connections coming from inside unless they are cryptographically proven.
 
 ---
 
-## 3. Advanced Operational Tactics (OpSec)
+## 2. Security & Performance (What's Inside?)
 
-### The "Invisible Node" Strategy
-While the OS-level firewall (UFW) allows the custom SSH port, **the Cloud Provider's Firewall (VCN Security Lists / AWS Security Groups) must be configured to DROP all incoming SSH traffic from the public internet (0.0.0.0/0).**
+### 🛡️ Military-Grade Security
+* **Unbreakable Login:** Passwords are disabled. You can only log in using a modern cryptographic key (`Ed25519`) PLUS a code from your phone (Google Authenticator MFA).
+* **AI Security Guard (CrowdSec):** Automatically reads server logs, detects attackers trying to guess passwords or scan ports, and permanently blocks their IP addresses.
+* **Jail for Apps (Container Security):** Apps like Grafana run in isolated "jails" with zero privileges (`cap_drop: ALL`). If an app is hacked, the hacker cannot touch the main server.
+* **Forensic Auditing:** `auditd` and `Monit` act as a black-box flight recorder, alerting you if anyone modifies critical system files.
 
-By doing this:
-1. The server becomes completely invisible to automated port scanners and botnets.
-2. Administrative SSH access is **only possible** by pinging the internal Tailscale VPN IP (e.g., `100.x.x.x`).
+### ⚡ Extreme Performance
+* **BBR Network Acceleration:** Uses Google's algorithm to make network traffic much faster and reduce lag.
+* **Heavy Workload Ready:** Configured to handle up to 65,535 simultaneous connections and includes an 8GB/9GB Swap file so the server never crashes from running out of RAM.
 
-### Cloudflare Strict Lockdown (Optional)
-**⚠️ WARNING:** ONLY execute this script if your domains are strictly routed through **Cloudflare**. If you use another CDN or direct DNS, this will block all incoming web traffic to your server.
+---
 
+## 3. Advanced OpSec Tricks (The Secret Sauce)
+
+### Trick 1: The "Invisible Node" Strategy
+Once everything is set up, you will go to your Cloud Provider (Oracle/AWS/DigitalOcean) and **delete the firewall rule that allows SSH (Port 22/2222/3333)**.
+* **Result:** Your server disappears from the internet. Hackers cannot even scan it. You will only be able to log in by connecting to your Tailscale VPN first, then SSHing into the internal `100.x.x.x` IP.
+
+### Trick 2: Emergency "Break-Glass" Procedure
+What if your Tailscale VPN breaks and you are locked out?
+1. Log into your Cloud Provider's Web Console.
+2. Temporarily open your custom SSH port (e.g., 2222) to the public internet.
+3. SSH in using your Public IP, fix the issue, and immediately close the port again.
+
+### Trick 3: Cloudflare Strict Lockdown (Optional)
+If you host websites on the `core-node` and use Cloudflare, hackers can still attack your server's Public IP directly, bypassing Cloudflare's protections. Run this script to tell the firewall to DROP all web traffic unless it comes strictly from Cloudflare's official servers:
 ```bash
 #!/bin/bash
+
 # Allow IPv4 from Cloudflare
 for ip in $(curl -s https://www.cloudflare.com/ips-v4); do
     sudo ufw allow proto tcp from $ip to any port 80,443 comment 'Cloudflare IP'
@@ -62,128 +61,132 @@ sudo ufw deny 443/tcp comment 'Deny direct HTTPS'
 sudo ufw reload
 ```
 
+### Trick 4: High Availability (S3 Backups)
+Always configure your apps (like Coolify) to backup their databases to an external S3 Bucket (like AWS S3 or Cloudflare R2). Since this server can be provisioned from zero to 100% in 5 minutes using these scripts, if the server burns down, you just run the script on a new VPS and pull your S3 backup.
+
 ---
 
 ## 4. Step-by-Step Deployment Guide
 
-**Zero Manual Editing Required:** The provisioning scripts are fully interactive. They will prompt you securely for usernames, custom ports, and passwords during execution.
+Follow these steps carefully. The scripts are interactive and will ask you for all the necessary details.
 
-### Prerequisites
-1. Fresh installation of **Ubuntu 22.04 or 24.04**.
-2. Root (`sudo`) access.
-3. Active [Tailscale](https://tailscale.com/) account.
-4. Google Authenticator app on your mobile device.
+### Step 0: The Most Important Step (Creating Your Key)
+Before running the scripts, you MUST create a modern `Ed25519` key and put it on the server. Do not skip this!
 
-### Phase 1: Execution (Interactive CLI)
-
-1. **Clone the repository:**
+1. **On your personal computer (Terminal or PowerShell):**
    ```bash
-   git clone https://github.com/nexlogiqai/Nexlogiq-Infrastructure.git
-   cd Nexlogiq-Infrastructure
+   ssh-keygen -t ed25519 -C "admin_key"
    ```
+   *(Press Enter to save it in the default location, and set a passphrase).*
 
-2. **Deploy the Core Node:**
-   Execute the core script. It will prompt you for the admin username, SSH port, and a secure password.
-   ```bash
-   sudo bash core-node/provision_core.sh
-   ```
+2. **Push the key to your new server:**
+   * **Method A (Terminal):** `ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@<SERVER_PUBLIC_IP>`
+   * **Method B (MobaXterm visually):** 1. Login to the server with the default user (`ubuntu` or `root`).
+     2. Run: `mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`
+     3. Open the `authorized_keys` file via the left panel and paste the contents of your `id_ed25519.pub` file into it.
 
-3. **Deploy the Monitor Node:**
-   Execute the monitor script. It will prompt you for system credentials AND a dedicated Grafana Admin password.
-   ```bash
-   sudo bash monitor-node/provision_monitor.sh
-   ```
-*(Note: Once the provisioning is complete, the scripts will automatically make all auxiliary management scripts executable).*
-
-### Phase 2: Post-Deployment Initialization (CRITICAL FOR BOTH NODES)
-
-**Step 1: First-Time Login (Public IP)**
-Login using your **Public IP** and **SSH Key**. The script allows a one-time login without MFA via `nullok`:
+### Step 1: Download the Blueprint
+Log into your server and run:
 ```bash
-ssh -i /path/to/private_key -p <YOUR_CUSTOM_PORT> <USER_NAME>@<PUBLIC_IP>
+git clone https://github.com/nexlogiqai/Nexlogiq-Infrastructure.git
+cd Nexlogiq-Infrastructure
 ```
 
-**Step 2: Setup MFA**
-Immediately run:
-```bash
-google-authenticator
-```
-*(Answer **y** to all prompts, scan QR code, and save backup codes).*
+### Step 2: Run the Provisioning Script
+* **If this is your Main Server:**
+  ```bash
+  sudo bash core-node/provision_core.sh
+  ```
+* **If this is your Monitoring Server:**
+  ```bash
+  sudo bash monitor-node/provision_monitor.sh
+  ```
+*(The scripts will ask you to choose a username, a custom SSH port, and secure passwords. Once finished, the server will automatically reboot).*
 
-**Step 3: Activate Zero-Trust VPN**
-```bash
-sudo tailscale up
-```
-
-**Step 4: The "Invisible" Switch**
-Go to Cloud Console and **DELETE** the Port Ingress Rule for SSH. Access is now Tailscale only.
+### Step 3: Post-Reboot Setup (Securing the Gates)
+1. **Login with your new Port and Key:**
+   ```bash
+   ssh -i ~/.ssh/id_ed25519 -p <YOUR_NEW_PORT> <YOUR_NEW_USERNAME>@<SERVER_PUBLIC_IP>
+   ```
+2. **Setup Phone MFA (Google Authenticator):**
+   Run the command `google-authenticator`, answer 'y' to everything, and scan the QR code with your phone.
+3. **Connect to Tailscale:**
+   Run `sudo tailscale up` and click the link to authenticate the server to your VPN.
+4. **Go Invisible:** Delete the SSH port rule from your Cloud Provider's firewall.
 
 ---
 
-## 5. Observability Lifecycle Management
+## 5. Connecting the Servers (Observability)
 
-Once both nodes are connected to your Tailscale network, you can securely link or unlink them dynamically.
+Now that both servers are secured and on Tailscale, let's connect them.
 
-### Adding a Node to Monitoring
-1. **Enable Telemetry (Run on Core Node):**
+1. **On the Core Node (Allow Monitoring):**
    ```bash
    sudo ./core-node/enable_telemetry.sh
    ```
-   *(Enter the Monitor Node's Tailscale IP when prompted to whitelist it).*
+   *(Type the Tailscale IP of your Monitor Node).*
 
-2. **Add Target (Run on Monitor Node):**
+2. **On the Monitor Node (Start Watching):**
    ```bash
    ./monitor-node/add_target.sh
    ```
-   *(Follow the prompts. Prometheus will automatically detect the new target within 15 seconds).*
+   *(Type the Tailscale IP of your Core Node. Prometheus will detect it in 15 seconds).*
 
-### Removing a Node from Monitoring
-1. **Remove Target (Run on Monitor Node):**
-   ```bash
-   ./monitor-node/remove_target.sh
-   ```
-   *(Select the server from the dynamic list to safely stop scraping it).*
-
-2. **Disable Telemetry (Run on Core Node):**
-   ```bash
-   sudo ./core-node/disable_telemetry.sh
-   ```
-   *(This completely uninstalls the Node Exporter agent and locks down the UFW port).*
+*(To remove a server, simply run `./monitor-node/remove_target.sh` on the Monitor Node, and `./core-node/disable_telemetry.sh` on the Core node).*
 
 ---
 
-## 6. Accessing Observability Dashboards
+## 6. Accessing Your Dashboards
 
-Ensure your local machine is connected to the Tailscale VPN to access these URLs using the Monitor Node's Tailscale IP:
+Connect your personal computer to Tailscale, then open your browser:
 
-* **Grafana (Metrics & Dashboards):**
-  * **URL:** `http://<MONITOR_TAILSCALE_IP>:3000`
-  * **Login:** `admin` / *(The Grafana password you set during the interactive setup)*
-  * *Tip: Import Dashboard ID `1860` (Node Exporter Full) to visualize the incoming metrics instantly.*
+* **Grafana (Beautiful Charts):** `http://<MONITOR_TAILSCALE_IP>:3000`
+  * **Login:** `admin` / *(The password you typed during the script)*
+  * *Tip: Go to Dashboards -> Import -> Type `1860` to get the ultimate server dashboard instantly.*
 
-* **Uptime Kuma (Uptime Monitoring & Alerts):**
-  * **URL:** `http://<MONITOR_TAILSCALE_IP>:3001`
-  * **Login:** Create an admin account on your first visit.
+* **Uptime Kuma (Is my site down?):** `http://<MONITOR_TAILSCALE_IP>:3001`
+  * **Login:** Create a new admin account on your first visit.
 
 ---
 
-## 7. System Verification Commands
+## 7. The Ultimate Verification (Is Everything Working?)
 
+Run these commands to verify that your setup is flawless and secure:
+
+### 🐳 1. Verify Docker & Containers
 ```bash
-# Check Firewall Rules
-sudo ufw status numbered
+# Check if Docker is running and healthy
+sudo systemctl status docker
 
-# Check Active Threat Defense
+# List running containers (Should see Prometheus, Grafana, and Kuma on Monitor Node)
+docker ps -a
+```
+
+### 🛡️ 2. Verify Security & Firewall
+```bash
+# See active UFW Firewall rules (Ensure Port 9100 is ONLY allowed from Tailscale)
+sudo ufw status verbose
+
+# Check CrowdSec (Verify it's reading logs and collections are loaded)
 sudo cscli metrics
 
-# Check Integrity & Health Status
+# Check if Auditd is actively monitoring your identity files
+sudo auditctl -l
+```
+
+### 🚪 3. Verify Ports & Connections
+```bash
+# See what ports are listening on the server
+sudo ss -tuln
+
+# Test if the Telemetry Agent (Port 9100) is working (Run on Core Node)
+curl -s http://localhost:9100/metrics | head -n 5
+```
+
+### 🩺 4. Verify System Health Monitor (Monit)
+```bash
+# Check if Monit is actively watching your passwords and SSH configs
 sudo monit status
-
-# Check Docker Daemon Logging
-docker info | grep "Logging Driver"
-
-# Check Active Prometheus Targets (Run on monitor-node)
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].labels'
 ```
 
 ---
