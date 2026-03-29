@@ -90,14 +90,35 @@ useradd -m -s /bin/bash $USER_NAME
 echo "$USER_NAME:$USER_PASS" | chpasswd
 usermod -aG sudo $USER_NAME
 
-BASE_USER=${SUDO_USER:-ubuntu}
-if [ -f "/home/$BASE_USER/.ssh/authorized_keys" ]; then
-    mkdir -p /home/$USER_NAME/.ssh
-    cp /home/$BASE_USER/.ssh/authorized_keys /home/$USER_NAME/.ssh/
-    chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/.ssh
-    chmod 700 /home/$USER_NAME/.ssh
-    chmod 600 /home/$USER_NAME/.ssh/authorized_keys
+# --- SMART SSH KEY DISCOVERY ---
+echo "[INFO] Searching for existing SSH keys to copy to $USER_NAME..."
+KEY_FOUND=false
+for CHECK_USER in "${SUDO_USER:-}" ubuntu opc debian root; do
+    if [ -n "$CHECK_USER" ] && [ -f "/home/$CHECK_USER/.ssh/authorized_keys" ]; then
+        mkdir -p /home/$USER_NAME/.ssh
+        cp /home/$CHECK_USER/.ssh/authorized_keys /home/$USER_NAME/.ssh/
+        chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/.ssh
+        chmod 700 /home/$USER_NAME/.ssh
+        chmod 600 /home/$USER_NAME/.ssh/authorized_keys
+        echo "[✔] SUCCESS: SSH key automatically copied from user '$CHECK_USER'."
+        KEY_FOUND=true
+        break
+    elif [ "$CHECK_USER" == "root" ] && [ -f "/root/.ssh/authorized_keys" ]; then
+        mkdir -p /home/$USER_NAME/.ssh
+        cp /root/.ssh/authorized_keys /home/$USER_NAME/.ssh/
+        chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/.ssh
+        chmod 700 /home/$USER_NAME/.ssh
+        chmod 600 /home/$USER_NAME/.ssh/authorized_keys
+        echo "[✔] SUCCESS: SSH key automatically copied from 'root'."
+        KEY_FOUND=true
+        break
+    fi
+done
+
+if [ "$KEY_FOUND" = false ]; then
+    echo "[✘] WARNING: No existing SSH key found! You MUST add one manually or you will be locked out."
 fi
+# -------------------------------
 
 echo "[INFO] Installing Docker..."
 curl -fsSL https://get.docker.com | sh
@@ -162,6 +183,15 @@ HostKeyAlgorithms ssh-ed25519,ssh-ed25519-cert-v01@openssh.com
 EOF
 
 if sshd -t; then echo "[✔] SUCCESS: SSH configuration syntax is valid."; else echo "[✘] ERROR: SSH configuration is broken!"; exit 1; fi
+
+# --- MODERN UBUNTU SOCKET FIX ---
+echo "[INFO] Applying SSH port changes and fixing systemd sockets..."
+if systemctl is-active --quiet ssh.socket; then
+    systemctl disable --now ssh.socket || true
+    systemctl enable --now ssh.service || true
+fi
+systemctl restart ssh || systemctl restart sshd
+# --------------------------------
 
 cat <<EOF >> /etc/sysctl.conf
 fs.file-max = 2097152
