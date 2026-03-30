@@ -18,20 +18,22 @@ We use a **"Zero-Trust"** approach, which means we assume the internet is full o
 
 ### 🛡️ Military-Grade Security
 * **Unbreakable Login:** Passwords are disabled. You can only log in using a modern cryptographic key (`Ed25519`) PLUS a code from your phone (Google Authenticator MFA).
+* **Smart Key Discovery:** The provisioning scripts automatically detect your existing SSH keys from default users (`ubuntu`, `root`, `opc`) and securely migrate them to your new admin user.
 * **AI Security Guard (CrowdSec):** Automatically reads server logs, detects attackers trying to guess passwords or scan ports, and permanently blocks their IP addresses.
 * **Jail for Apps (Container Security):** Apps like Grafana run in isolated "jails" with zero privileges (`cap_drop: ALL`). If an app is hacked, the hacker cannot touch the main server.
 * **Forensic Auditing:** `auditd` and `Monit` act as a black-box flight recorder, alerting you if anyone modifies critical system files.
 
-### ⚡ Extreme Performance
+### ⚡ Extreme Performance & Stability
 * **BBR Network Acceleration:** Uses Google's algorithm to make network traffic much faster and reduce lag.
 * **Heavy Workload Ready:** Configured to handle up to 65,535 simultaneous connections and includes an 8GB/9GB Swap file so the server never crashes from running out of RAM.
+* **Systemd Socket Fix:** Automatically resolves modern Ubuntu SSH socket conflicts to ensure seamless custom port bindings.
 
 ---
 
 ## 3. Advanced OpSec Tricks (The Secret Sauce)
 
 ### Trick 1: The "Invisible Node" Strategy
-Once everything is set up, you will go to your Cloud Provider (Oracle/AWS/DigitalOcean) and **delete the firewall rule that allows SSH (Port 22/2222/3333)**.
+Once everything is set up, you will go to your Cloud Provider (Oracle/AWS/DigitalOcean/Hetzner) and **delete the firewall rule that allows SSH (Port 22/2222/3333)**.
 * **Result:** Your server disappears from the internet. Hackers cannot even scan it. You will only be able to log in by connecting to your Tailscale VPN first, then SSHing into the internal `100.x.x.x` IP.
 
 ### Trick 2: Emergency "Break-Glass" Procedure
@@ -42,6 +44,7 @@ What if your Tailscale VPN breaks and you are locked out?
 
 ### Trick 3: Cloudflare Strict Lockdown (Optional)
 If you host websites on the `core-node` and use Cloudflare, hackers can still attack your server's Public IP directly, bypassing Cloudflare's protections. Run this script to tell the firewall to DROP all web traffic unless it comes strictly from Cloudflare's official servers:
+
 ```bash
 #!/bin/bash
 
@@ -71,7 +74,7 @@ Always configure your apps (like Coolify) to backup their databases to an extern
 Follow these steps carefully. The scripts are interactive and will ask you for all the necessary details.
 
 ### Step 0: The Most Important Step (Creating Your Key)
-Before running the scripts, you MUST create a modern `Ed25519` key and put it on the server. Do not skip this!
+Before running the scripts, you MUST create a modern `Ed25519` key and put it on the server. The script features *Smart Discovery*, but it needs a key to discover!
 
 1. **On your personal computer (Terminal or PowerShell):**
    ```bash
