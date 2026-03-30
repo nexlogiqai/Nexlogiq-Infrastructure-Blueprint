@@ -156,6 +156,7 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow $SSH_PORT/tcp
 ufw allow in on tailscale0
+ufw route allow in on tailscale0
 echo "y" | ufw enable
 if ufw status | grep -qw active; then echo "[✔] SUCCESS: UFW is active."; else echo "[✘] ERROR: UFW is NOT active!"; exit 1; fi
 
