@@ -192,5 +192,23 @@ curl -s http://localhost:9100/metrics | head -n 5
 sudo monit status
 ```
 
+## 🛠️ Troubleshooting (FAQ)
+
+**1. I can't access the Grafana/Uptime Kuma dashboards?**
+* **Cause:** The Docker UFW patch strictly blocks external traffic. 
+* **Fix:** Ensure you are actively connected to your Tailscale VPN on your personal device. You must use the `http://100.x.x.x` IP address, not the public IP.
+
+**2. I'm locked out of my server! (Server refused key)**
+* **Cause:** Modifying `authorized_keys` directly from a Windows environment often injects hidden `\r\n` characters, which SSH strictly rejects.
+* **Fix:** Use your Cloud Provider's Emergency Console (Serial Console) and run this exact command to sanitize your key:
+  `echo "YOUR_PUBLIC_KEY" > ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`
+
+**3. The provisioning script hangs or fails on `fallocate`?**
+* **Fix:** Our script includes a `dd` fallback, but ensure your VPS has at least 15GB of free disk space before running the setup.
+
+---
+## 📄 License
+This project is licensed under the MIT License.
+
 ---
 **Maintained by Nexlogiq AI** | Infrastructure Engineering Division
